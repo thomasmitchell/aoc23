@@ -123,7 +123,6 @@ fn solve2() -> Result<i32> {
 
             if *square == b'*' {
                 let (x, y) = (x_coord as i32, y_coord as i32);
-                //if we're here, it's non-numeric, and not a dot, so its a symbol.
                 gear_coords.insert((x, y));
             }
         }
