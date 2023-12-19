@@ -8,7 +8,7 @@ fn main() -> Result<()> {
 }
 
 #[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Copy)]
-enum Rank { Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Jack, Queen, King, Ace }
+enum Rank { Jack, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Queen, King, Ace }
 
 #[derive(Eq, PartialEq, PartialOrd, Ord, Clone, Copy)]
 enum ScoreType { HighCard, OnePair, TwoPair, ThreeOfKind, FullHouse, FourOfKind, FiveOfKind }
@@ -39,7 +39,7 @@ impl Hand {
     fn score_type(&self) -> ScoreType {
         let mut score = ScoreType::HighCard;
         let rank_freq = self._gen_rank_frequencies();
-        for rank_count in rank_freq {
+        for rank_count in &rank_freq[Rank::Two as usize..] {
             score = match rank_count {
                 2 => match score {
                     ScoreType::OnePair => ScoreType::TwoPair,
@@ -52,6 +52,18 @@ impl Hand {
                 }
                 4 => ScoreType::FourOfKind,
                 5 => ScoreType::FiveOfKind,
+                _ => score,
+            }
+        }
+        
+        //assign jokers
+        for _ in 0..rank_freq[Rank::Jack as usize] {
+            score = match score {
+                ScoreType::HighCard => ScoreType::OnePair,
+                ScoreType::OnePair => ScoreType::ThreeOfKind,
+                ScoreType::TwoPair => ScoreType::FullHouse,
+                ScoreType::ThreeOfKind => ScoreType::FourOfKind,
+                ScoreType::FourOfKind => ScoreType::FiveOfKind,
                 _ => score,
             }
         }
