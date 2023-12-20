@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use std::io::prelude::*;
 
 fn main() -> Result<()> {
-    let answer = solve()?;
+    let answer = solve2()?;
     println!("{}", answer);
     return Ok(())
 }
@@ -33,6 +33,41 @@ impl Grid {
             squares: Vec::new(),
             width: 0,
             start: 0,
+        }
+    }
+
+    fn with_dimensions(area: usize, width: usize) -> Grid {
+        assert!(area % width == 0, "area not evenly divisible by width");
+        return Grid {
+            squares: vec![b'.'; area],
+            width: width,
+            start: 0,
+        }
+    }
+
+    fn area(&self) -> usize { self.squares.len() }
+    fn width(&self) -> usize { self.width }
+    fn get(&self, position: usize) -> Result<&u8> {
+        return self.squares.get(position).ok_or(anyhow!("tried to get out of bounds"));
+    }
+
+    fn set(&mut self, position: usize, val: u8) -> Result<()> {
+        *self.squares.get_mut(position)
+            .ok_or(anyhow!("set out of bounds"))? = val;
+        if val == b'S' {
+            self.start = position;
+        }
+
+        return Ok(());
+    }
+
+    fn print(&self) {
+        let mut position = 0;
+        while position < self.area() {
+            let line: String = String::from_utf8(self.squares[position..position + self.width].to_vec())
+                .expect("out of range on print");
+            println!("{}", line);
+            position += self.width;
         }
     }
 
@@ -118,6 +153,8 @@ impl <'a> GridPosition<'a> {
     fn get(&self) -> Result<&u8> {
         return self.grid.squares.get(self.position).ok_or(anyhow!("out of range!"));
     }
+
+    fn position(&self) -> usize { self.position }
 }
 
 fn directions_for_pipe(pipe: u8) -> Option<(Direction, Direction)> {
@@ -132,7 +169,7 @@ fn directions_for_pipe(pipe: u8) -> Option<(Direction, Direction)> {
     }
 }
 
-fn solve() -> Result<u64> {
+fn parse_grid() -> Result<Grid> {
     let stdin = std::io::stdin();
     let line_iter = stdin.lock().lines();
 
@@ -147,12 +184,42 @@ fn solve() -> Result<u64> {
         grid.insert_line(&line)?;
     }
 
+    return Ok(grid);
+}
+
+fn solve() -> Result<u64> {
+    let grid = parse_grid()?;
+    let mut ret = 0;
+    walk_grid_map(&grid, |_| ret += 1)?;
+    return Ok(ret/2);
+}
+
+fn solve2() -> Result<u64> {
+    let grid = parse_grid()?;
+    let mut clean_grid = Grid::with_dimensions(grid.area(), grid.width());
+    walk_grid_map(&grid, |pos| {
+        if let Ok(pipe) = pos.get() {
+            clean_grid.set(pos.position(), *pipe).expect("could not set section of grid");
+        }
+    })?;
+
+    let start_form = determine_start_form(&mut clean_grid)?;
+    clean_grid.set(clean_grid.start, start_form)?;
+    let ret = count_interior(&mut clean_grid)?;
+    clean_grid.print();
+    return Ok(ret);
+}
+
+fn walk_grid_map<F> (grid: &Grid, mut func: F) -> Result<()>
+    where F: FnMut(&GridPosition)
+{
     let mut pos = grid.position_at_start();
     let mut from_direction = go_legal_direction(&mut pos)
         .ok_or(anyhow!("no legal direction from starting position"))?;
 
-    let mut ret = 1;
     while !pos.at_start() {
+        func(&pos);
+
         let legal_directions = directions_for_pipe(*pos.get()?)
             .ok_or(anyhow!("ended up outside pipe!"))?;
         let mut next_direction = legal_directions.0;
@@ -162,28 +229,88 @@ fn solve() -> Result<u64> {
 
         pos.go(next_direction)?;
         from_direction = next_direction;
-        ret += 1;
     }
 
-    return Ok(ret/2);
+    func(&pos);
+
+    return Ok(())
+}
+
+fn count_interior(grid: &mut Grid) -> Result<u64> {
+    let mut inside = false;
+    let mut ret = 0;
+
+    for i in 0..grid.area() {
+        if i % grid.width() == 0 {
+            inside = false;
+        }
+
+        let pipe = grid.get(i)?;
+        match pipe {
+            b'L' | b'J' | b'|'  => {
+                inside = !inside;
+            }
+            b'.' => {
+                if inside {
+                    ret += 1;
+                    grid.set(i, b'O')?;
+                }
+            }
+            _ => {},
+        }
+    }
+
+    return Ok(ret);
 }
 
 fn go_legal_direction(pos: &mut GridPosition) -> Option<Direction> {
     for dir in [Direction::Up, Direction::Left, Direction::Down, Direction::Right].iter() {
-        if let Ok(_) = pos.go(*dir) {
-            let pipe = pos.get().expect("could not get at navigated pipe");
-            let legal_dirs = directions_for_pipe(*pipe); 
-            if let Some(legal_dirs) = legal_dirs {
-                let opposite = dir.opposite();
-                if legal_dirs.0 == opposite || legal_dirs.1 == opposite {
-                    return Some(*dir);
-                }
-            }
-
-            let result = pos.go(dir.opposite());
-            assert!(result.is_ok(), "could not go back to original position");
+        if is_legal_direction(pos, *dir) {
+            pos.go(*dir).expect("could not return to original location");
+            return Some(*dir);
         }
     }
 
     return None;
+}
+
+fn determine_start_form(grid: &mut Grid) -> Result<u8> {
+    let mut pos = grid.position_at_start();
+    let mut valid_dirs = [Direction::Down; 2];
+    let mut idx = 0;
+    for dir in [Direction::Up, Direction::Left, Direction::Down, Direction::Right].iter() {
+        if is_legal_direction(&mut pos, *dir) {
+            valid_dirs[idx] = *dir;
+            idx += 1;
+        }
+    }
+
+    return match valid_dirs {
+        [Direction::Up, Direction::Left] => Ok(b'J'),
+        [Direction::Up, Direction::Down] => Ok(b'|'),
+        [Direction::Up, Direction::Right] => Ok(b'L'),
+        [Direction::Left, Direction::Down] => Ok(b'7'),
+        [Direction::Left, Direction::Right] => Ok(b'-'),
+        [Direction::Down, Direction::Right] => Ok(b'F'),
+        _ => Err(anyhow!("unknown start character")),
+    }
+}
+
+fn is_legal_direction(pos: &mut GridPosition, dir: Direction) -> bool {
+    if let Ok(_) = pos.go(dir) {
+        let pipe = pos.get().expect("could not get at navigated pipe").clone();
+        let result = pos.go(dir.opposite());
+        assert!(result.is_ok(), "could not go back to original position");
+
+        let legal_dirs = directions_for_pipe(pipe); 
+
+        if let Some(legal_dirs) = legal_dirs {
+            let opposite = dir.opposite();
+            if legal_dirs.0 == opposite || legal_dirs.1 == opposite {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
